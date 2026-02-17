@@ -157,13 +157,19 @@ function handleFileSelect(e) {
 function cleanNumericString(str) {
   if (!str) return '0';
   str = String(str).trim();
-  // Remove currency symbols and codes
   str = str.replace(/^\s*(\$|USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*/i, '');
-  // Remove thousands separators (commas)
   str = str.replace(/,/g, '');
-  // Remove any trailing currency
   str = str.replace(/\s*(USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*$/i, '');
   return str;
+}
+
+function formatCurrency(value) {
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  return '$' + num.toLocaleString('en-AU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 }
 
 function parseCSV(csvText) {
@@ -199,7 +205,6 @@ function parseCSV(csvText) {
     return obj;
   });
 
-  // Auto-detect columns
   const lower = headers.map(h => h.toLowerCase().trim());
   symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx|stock/i.test(lower[i])) ||
                  (headers.length > 0 ? headers[0] : null);
@@ -210,7 +215,6 @@ function parseCSV(csvText) {
   priceHeader = headers.find((h,i) => /price|cost|purchase|buy|avg/i.test(lower[i])) ||
                 (headers.length > 2 ? headers[2] : null);
 
-  // Calculate total shares per symbol
   symbolToTotalShares = {};
   data.forEach(row => {
     const sym = (row[symbolHeader] || '').trim();
@@ -241,8 +245,14 @@ function renderTable() {
   data.forEach((row, rowIndex) => {
     html += '<tr>';
     headers.forEach((header, colIndex) => {
-      const val = row[header] ?? '';
-      html += `<td><input type="text" value="${escapeHTML(val)}"
+      let displayVal = row[header] ?? '';
+
+      // Format Adjusted Cost Base column with $ and commas
+      if (header === "Adjusted Cost Base") {
+        displayVal = formatCurrency(displayVal);
+      }
+
+      html += `<td><input type="text" value="${escapeHTML(displayVal)}"
                data-row="${rowIndex}" data-col="${colIndex}"
                onchange="updateCell(this)"></td>`;
     });
@@ -257,7 +267,14 @@ function updateCell(input) {
   const rowIdx = parseInt(input.dataset.row);
   const colIdx = parseInt(input.dataset.col);
   const header = headers[colIdx];
-  data[rowIdx][header] = input.value;
+  let newValue = input.value;
+
+  // If editing Adjusted Cost Base → strip formatting before storing
+  if (header === "Adjusted Cost Base") {
+    newValue = cleanNumericString(newValue);
+  }
+
+  data[rowIdx][header] = newValue;
 }
 
 function renderAdjustmentPanel() {
@@ -277,8 +294,7 @@ function renderAdjustmentPanel() {
   let html = `
     <h2>Pro-rata Total Cost Base Adjustments</h2>
     <p>Enter the <strong>total $ adjustment amount</strong> for each stock symbol.<br>
-       This total will be <strong>pro-rated</strong> across all purchases of that symbol<br>
-       based on the number of shares in each row.</p>
+       This total will be <strong>pro-rated</strong> across all purchases of that symbol.</p>
     <div style="max-width:600px;">`;
 
   uniqueSymbols.forEach(sym => {
@@ -300,9 +316,8 @@ function renderAdjustmentPanel() {
       Apply Adjustments
     </button>
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      Result: each row gets <strong>adjustment = total_$ × (row_shares / total_shares)</strong><br>
-      added to its original purchase price → new column <strong>Adjusted Cost Base</strong>.<br>
-      <small>Note: $ symbols and currency codes are now stripped from the price & shares columns automatically.</small>
+      <strong>Adjusted Cost Base</strong> is now rounded to 2 decimal places<br>
+      and displayed with $ and thousands separators (e.g. $1,234.56)
     </p>`;
 
   adjustmentPanel.innerHTML = html;
@@ -341,11 +356,13 @@ function applyAdjustments() {
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    row[adjustedHeader] = (origPrice + rowAdj).toFixed(6);
+    // Round to 2 decimal places and store as plain number string
+    const adjustedValue = (origPrice + rowAdj).toFixed(2);
+    row[adjustedHeader] = adjustedValue;
   });
 
   renderTable();
-  messageEl.textContent = `Pro-rata adjustments applied – "${adjustedHeader}" column updated`;
+  messageEl.textContent = `Adjustments applied – "${adjustedHeader}" column updated (2 decimal places)`;
 }
 
 function downloadCSV() {
