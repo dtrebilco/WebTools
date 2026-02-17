@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CSV Editor – Share Purchases + Cost Base Adjustments</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+  body {
+    font-family: -apple-system, BlinkMacOSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 20px;
+    background: #f8f9fa;
+    color: #222;
+  }
+  h1 { color: #2c3e50; }
+  .container { max-width: 1400px; margin: 0 auto; }
+  .controls {
+    margin: 20px 0;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  button, input[type="file"] {
+    padding: 10px 16px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: white;
+    cursor: pointer;
+  }
+  button {
+    background: #3498db;
+    color: white;
+    border: none;
+  }
+  button:hover { background: #2980b9; }
+  button:disabled { background: #95a5a6; cursor: not-allowed; }
+  #message { color: #e74c3c; font-weight: 500; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 16px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow-x: auto;
+    display: block;
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+  }
+  th {
+    background: #34495e;
+    color: white;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  td input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+  }
+  td input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52,152,219,0.2);
+  }
+  .filename { font-weight: 500; color: #2c3e50; }
+  #adjustmentPanel {
+    margin-top: 40px;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .adj-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eee;
+  }
+  .adj-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Share Purchase CSV Editor + Cost Base Adjustments</h1>
+
+  <div class="controls">
+    <input type="file" id="fileInput" accept=".csv,text/csv" />
+    <button id="downloadBtn" onclick="downloadCSV()" disabled>Download edited CSV</button>
+    <span id="message"></span>
+  </div>
+
+  <div id="filenameDisplay" style="margin: 8px 0; min-height: 1.4em;"></div>
+
+  <div id="tableContainer"></div>
+  <div id="adjustmentPanel"></div>
+</div>
+
+<script>
+// ────────────────────────────────────────────────
+let data = [];
+let headers = [];
+let originalFilename = "edited.csv";
+let symbolHeader = null;
+let priceHeader = null;
+let uniqueSymbols = [];
+
+const fileInput      = document.getElementById('fileInput');
+const downloadBtn    = document.getElementById('downloadBtn');
+const messageEl      = document.getElementById('message');
+const filenameDisplay = document.getElementById('filenameDisplay');
+const tableContainer = document.getElementById('tableContainer');
+const adjustmentPanel = document.getElementById('adjustmentPanel');
+
+fileInput.addEventListener('change', handleFileSelect);
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  originalFilename = file.name;
+  filenameDisplay.innerHTML = `Loaded: <span class="filename">${escapeHTML(originalFilename)}</span>`;
+
+  messageEl.textContent = "Reading file...";
+  downloadBtn.disabled = false;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    parseCSV(e.target.result);
+    messageEl.textContent = "";
+  };
+  reader.onerror = () => {
+    messageEl.textContent = "Error reading file";
+    downloadBtn.disabled = true;
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(csvText) {
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length === 0) return;
+
+  // Basic CSV parser (handles quoted fields with commas)
+  function parseLine(line) {
+    const row = [];
+    let inQuote = false;
+    let field = '';
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuote && line[i+1] === '"') { field += '"'; i++; }
+        else inQuote = !inQuote;
+      } else if (char === ',' && !inQuote) {
+        row.push(field);
+        field = '';
+      } else {
+        field += char;
+      }
+    }
+    row.push(field);
+    return row;
+  }
+
+  const rawRows = lines.map(parseLine);
+  headers = rawRows[0];
+
+  data = rawRows.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i] ?? '');
+    return obj;
+  });
+
+  // Auto-detect important columns
+  const lower = headers.map(h => h.toLowerCase());
+  symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx/i.test(lower[i])) ||
+                 (headers.length > 1 ? headers[1] : headers[0]);
+
+  priceHeader = headers.find((h,i) => /price|cost|purchase|buy/i.test(lower[i])) ||
+                (headers.length > 0 ? headers[headers.length-1] : null);
+
+  uniqueSymbols = data.length
+    ? [...new Set(data.map(r => r[symbolHeader]).filter(s => s && s.trim()))].sort()
+    : [];
+
+  renderTable();
+  renderAdjustmentPanel();
+}
+
+function renderTable() {
+  if (data.length === 0) {
+    tableContainer.innerHTML = "<p>No data to display</p>";
+    return;
+  }
+
+  let html = '<table><thead><tr>';
+  headers.forEach(h => html += `<th>${escapeHTML(h)}</th>`);
+  html += '</tr></thead><tbody>';
+
+  data.forEach((row, rowIndex) => {
+    html += '<tr>';
+    headers.forEach((header, colIndex) => {
+      const val = row[header] ?? '';
+      html += `<td><input type="text" value="${escapeHTML(val)}"
+               data-row="${rowIndex}" data-col="${colIndex}"
+               onchange="updateCell(this)"></td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  tableContainer.innerHTML = html;
+}
+
+function updateCell(input) {
+  const rowIdx = parseInt(input.dataset.row);
+  const colIdx = parseInt(input.dataset.col);
+  const header = headers[colIdx];
+  data[rowIdx][header] = input.value;
+}
+
+function renderAdjustmentPanel() {
+  adjustmentPanel.innerHTML = '';
+
+  if (!symbolHeader || !priceHeader) {
+    adjustmentPanel.innerHTML = `
+      <h2>Cost Base Adjustments</h2>
+      <p style="color:#e74c3c;">Could not automatically detect "stock symbol" and "purchase price" columns.<br>
+      Please make sure your CSV contains these columns (names can vary slightly).</p>`;
+    return;
+  }
+
+  let html = `
+    <h2>Cost Base Adjustments</h2>
+    <p>Enter an adjustment in <strong>$ per share</strong> for each stock.<br>
+       This value will be <strong>added</strong> to the <strong>${escapeHTML(priceHeader)}</strong> column to create a new "Adjusted Cost Base" column.</p>
+    <div style="max-width:500px;">`;
+
+  uniqueSymbols.forEach(sym => {
+    const safeId = 'adj_' + String(sym).replace(/[^a-z0-9]/gi, '_');
+    html += `
+    <div class="adj-row">
+      <span style="flex:1; font-weight:500;">${escapeHTML(sym)}</span>
+      <input type="number" id="${safeId}" step="0.0001" value="0" style="width:160px; padding:8px; font-size:1rem;">
+    </div>`;
+  });
+
+  html += `</div>
+    <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 24px; font-size:1.1rem;">
+      Apply Adjustments
+    </button>
+    <p style="font-size:0.9rem; color:#666; margin-top:16px;">
+      The new column can be edited manually afterwards. Re-apply to update from the adjustment fields.
+    </p>`;
+
+  adjustmentPanel.innerHTML = html;
+}
+
+function applyAdjustments() {
+  if (!symbolHeader || !priceHeader || uniqueSymbols.length === 0) return;
+
+  const adjustments = {};
+  uniqueSymbols.forEach(sym => {
+    const safeId = 'adj_' + String(sym).replace(/[^a-z0-9]/gi, '_');
+    const input = document.getElementById(safeId);
+    adjustments[sym] = input ? (parseFloat(input.value) || 0) : 0;
+  });
+
+  const adjustedHeader = "Adjusted Cost Base";
+
+  // Add column if it doesn't exist yet
+  if (!headers.includes(adjustedHeader)) {
+    headers.push(adjustedHeader);
+  }
+
+  data.forEach(row => {
+    const sym = row[symbolHeader];
+    const adj = adjustments[sym] !== undefined ? adjustments[sym] : 0;
+    const origStr = row[priceHeader] || "0";
+    let orig = parseFloat(origStr);
+    if (isNaN(orig)) orig = 0;
+
+    row[adjustedHeader] = (orig + adj).toFixed(4);
+  });
+
+  renderTable();
+  messageEl.textContent = `Adjustments applied – "${adjustedHeader}" column added/updated`;
+}
+
+function downloadCSV() {
+  if (data.length === 0) {
+    messageEl.textContent = "Nothing to download";
+    return;
+  }
+
+  let csv = headers.map(escapeCSV).join(',') + '\n';
+
+  data.forEach(row => {
+    const values = headers.map(h => escapeCSV(row[h] ?? ''));
+    csv += values.join(',') + '\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = originalFilename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  messageEl.textContent = `Downloaded ${originalFilename}`;
+}
+
+function escapeCSV(str) {
+  if (str == null) return '';
+  str = String(str);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+</script>
+</body>
+</html>

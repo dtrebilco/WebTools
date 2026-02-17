@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CSV Editor - Upload • Edit • Download</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+  body {
+    font-family: -apple-system, BlinkMacOSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 20px;
+    background: #f8f9fa;
+    color: #222;
+  }
+  h1 {
+    color: #2c3e50;
+  }
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .controls {
+    margin: 20px 0;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  button, input[type="file"] {
+    padding: 10px 16px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: white;
+    cursor: pointer;
+  }
+  button {
+    background: #3498db;
+    color: white;
+    border: none;
+  }
+  button:hover {
+    background: #2980b9;
+  }
+  #message {
+    color: #e74c3c;
+    font-weight: 500;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 16px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow-x: auto;
+    display: block;
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+  }
+  th {
+    background: #34495e;
+    color: white;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  td input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+  }
+  td input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52,152,219,0.2);
+  }
+  .csv-controls {
+    margin: 30px 0 40px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Simple CSV Editor</h1>
+
+  <div class="controls">
+    <input type="file" id="fileInput" accept=".csv, text/csv" />
+    <button onclick="downloadCSV()">Download edited CSV</button>
+    <span id="message"></span>
+  </div>
+
+  <div id="tableContainer"></div>
+</div>
+
+<script>
+// ────────────────────────────────────────────────
+let data = [];           // array of objects
+let headers = [];        // original column names
+
+const fileInput = document.getElementById('fileInput');
+const tableContainer = document.getElementById('tableContainer');
+const messageEl = document.getElementById('message');
+
+fileInput.addEventListener('change', handleFileSelect);
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  messageEl.textContent = "Reading file...";
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    parseCSV(text);
+    messageEl.textContent = "";
+  };
+  reader.onerror = () => {
+    messageEl.textContent = "Error reading file";
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(csvText) {
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length === 0) {
+    messageEl.textContent = "File is empty";
+    return;
+  }
+
+  // Very basic CSV parsing (handles quoted fields with commas)
+  function parseLine(line) {
+    const row = [];
+    let inQuote = false;
+    let field = '';
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuote && line[i+1] === '"') {
+          field += '"';
+          i++; // skip escaped quote
+        } else {
+          inQuote = !inQuote;
+        }
+      } else if (char === ',' && !inQuote) {
+        row.push(field);
+        field = '';
+      } else {
+        field += char;
+      }
+    }
+    row.push(field); // last field
+    return row;
+  }
+
+  const rawRows = lines.map(parseLine);
+
+  headers = rawRows[0];
+  data = rawRows.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => {
+      obj[h] = row[i] ?? '';
+    });
+    return obj;
+  });
+
+  renderTable();
+}
+
+function renderTable() {
+  if (data.length === 0 || headers.length === 0) {
+    tableContainer.innerHTML = "<p>No data to display</p>";
+    return;
+  }
+
+  let html = '<table><thead><tr>';
+  headers.forEach(h => {
+    html += `<th>${escapeHTML(h)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  data.forEach((row, rowIndex) => {
+    html += '<tr>';
+    headers.forEach((header, colIndex) => {
+      const val = row[header] ?? '';
+      html += `<td><input type="text" value="${escapeHTML(val)}" 
+               data-row="${rowIndex}" data-col="${colIndex}" 
+               onchange="updateCell(this)"></td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  tableContainer.innerHTML = html;
+}
+
+function updateCell(input) {
+  const rowIdx = parseInt(input.dataset.row);
+  const colIdx = parseInt(input.dataset.col);
+  const header = headers[colIdx];
+  data[rowIdx][header] = input.value;
+}
+
+function downloadCSV() {
+  if (data.length === 0) {
+    messageEl.textContent = "Nothing to download";
+    return;
+  }
+
+  // Build CSV content
+  let csv = headers.map(escapeCSV).join(',') + '\n';
+
+  data.forEach(row => {
+    const values = headers.map(h => escapeCSV(row[h] ?? ''));
+    csv += values.join(',') + '\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'edited.csv';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  messageEl.textContent = "Downloaded edited.csv";
+}
+
+function escapeCSV(str) {
+  if (str === null || str === undefined) return '';
+  str = String(str);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+</script>
+</body>
+</html>
