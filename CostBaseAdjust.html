@@ -41,7 +41,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 1rem;
+    font-size: 0.95rem;
     white-space: nowrap;
   }
   table {
@@ -99,7 +99,6 @@
   .shares { color: #555; font-size: 0.95rem; }
   .input-group { display: flex; align-items: center; gap: 8px; }
   .input-group input { width: 180px; }
-  .option-row { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
@@ -109,7 +108,11 @@
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".csv,text/csv" />
-    <button id="downloadBtn" onclick="downloadCSV()" disabled>Download updated CSV</button>
+    <button id="downloadBtn" onclick="downloadCSV()" disabled>Download CSV</button>
+    <label class="checkbox-label">
+      <input type="checkbox" id="overwriteCostOnDownload" />
+      Overwrite original cost column on download
+    </label>
     <span id="message"></span>
   </div>
 
@@ -130,6 +133,7 @@ let countHeader = null;
 let priceHeader = null;
 let uniqueSymbols = [];
 let symbolToTotalShares = {};
+let adjustmentsApplied = false;  // flag to know if column was added
 
 const fileInput      = document.getElementById('fileInput');
 const downloadBtn    = document.getElementById('downloadBtn');
@@ -173,7 +177,7 @@ function cleanNumericString(str) {
 
 function formatCurrency(value) {
   const num = parseFloat(value);
-  if (isNaN(num)) return value;
+  if (isNaN(num)) return value || '';
   return '$' + num.toLocaleString('en-AU', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
@@ -234,6 +238,7 @@ function parseCSV(csvText) {
 
   uniqueSymbols = Object.keys(symbolToTotalShares).sort();
 
+  adjustmentsApplied = false;
   renderAdjustmentPanel();
   renderTable();
 }
@@ -246,19 +251,31 @@ function renderTable() {
 
   let html = '<table><thead><tr>';
   headers.forEach(h => html += `<th>${escapeHTML(h)}</th>`);
+  if (adjustmentsApplied) {
+    html += `<th>Adjusted Cost Base</th>`;
+  }
   html += '</tr></thead><tbody>';
 
   data.forEach((row, rowIndex) => {
     html += '<tr>';
     headers.forEach((header, colIndex) => {
       let displayVal = row[header] ?? '';
-      if (header === priceHeader || header === "Adjusted Cost Base") {
+      if (header === priceHeader) {
         displayVal = formatCurrency(displayVal);
       }
       html += `<td><input type="text" value="${escapeHTML(displayVal)}"
                data-row="${rowIndex}" data-col="${colIndex}"
                onchange="updateCell(this)"></td>`;
     });
+
+    if (adjustmentsApplied) {
+      let adjVal = row["Adjusted Cost Base"] ?? '';
+      adjVal = formatCurrency(adjVal);
+      html += `<td><input type="text" value="${escapeHTML(adjVal)}"
+               data-row="${rowIndex}" data-col="adjusted"
+               onchange="updateAdjustedCell(this)"></td>`;
+    }
+
     html += '</tr>';
   });
 
@@ -272,11 +289,17 @@ function updateCell(input) {
   const header = headers[colIdx];
   let newValue = input.value;
 
-  if (header === priceHeader || header === "Adjusted Cost Base") {
+  if (header === priceHeader) {
     newValue = cleanNumericString(newValue);
   }
 
   data[rowIdx][header] = newValue;
+}
+
+function updateAdjustedCell(input) {
+  const rowIdx = parseInt(input.dataset.row);
+  let newValue = cleanNumericString(input.value);
+  data[rowIdx]["Adjusted Cost Base"] = newValue;
 }
 
 function renderAdjustmentPanel() {
@@ -311,21 +334,13 @@ function renderAdjustmentPanel() {
 
   html += `</div>
 
-    <div class="option-row">
-      <label class="checkbox-label">
-        <input type="checkbox" id="overwriteCost" />
-        Overwrite original cost/price column with adjusted values
-        <small style="color:#666; margin-left:8px;">(instead of creating separate column)</small>
-      </label>
-    </div>
-
     <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 28px; font-size:1.1rem;">
       Apply Adjustments
     </button>
 
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      Adjusted values are rounded to 2 decimal places.<br>
-      Downloaded CSV includes $ and thousands formatting.
+      The Adjusted Cost Base column appears only after you apply adjustments.<br>
+      Checkbox controls only the downloaded CSV format.
     </p>`;
 
   adjustmentPanel.innerHTML = html;
@@ -335,28 +350,24 @@ function applyAdjustments() {
   if (!symbolHeader || !countHeader || !priceHeader || uniqueSymbols.length === 0) return;
 
   const adjustmentsTotal = {};
+  let hasAnyAdjustment = false;
+
   uniqueSymbols.forEach(sym => {
     const safeId = 'adj_' + String(sym).replace(/[^a-z0-9]/gi, '_');
     const input = document.getElementById(safeId);
-    adjustmentsTotal[sym] = input ? (parseFloat(input.value) || 0) : 0;
+    const val = input ? (parseFloat(input.value) || 0) : 0;
+    adjustmentsTotal[sym] = val;
+    if (val !== 0) hasAnyAdjustment = true;
   });
 
-  const overwrite = document.getElementById('overwriteCost')?.checked ?? false;
-  const targetHeader = overwrite ? priceHeader : "Adjusted Cost Base";
-
-  // If overwriting, ensure target is the original price column
-  if (overwrite && targetHeader !== priceHeader) return;
-
-  // If not overwriting, add column if missing
-  if (!overwrite && !headers.includes(targetHeader)) {
-    headers.push(targetHeader);
+  if (!hasAnyAdjustment) {
+    messageEl.textContent = "No adjustments entered – nothing changed";
+    return;
   }
 
-  // Remove separate Adjusted Cost Base column if overwriting
-  if (overwrite && headers.includes("Adjusted Cost Base")) {
-    const idx = headers.indexOf("Adjusted Cost Base");
-    headers.splice(idx, 1);
-    data.forEach(row => delete row["Adjusted Cost Base"]);
+  // Add the column only now
+  if (!headers.includes("Adjusted Cost Base")) {
+    headers.push("Adjusted Cost Base");
   }
 
   data.forEach(row => {
@@ -376,13 +387,12 @@ function applyAdjustments() {
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    const adjustedValue = (origPrice + rowAdj).toFixed(2);
-
-    row[targetHeader] = adjustedValue;
+    row["Adjusted Cost Base"] = (origPrice + rowAdj).toFixed(2);
   });
 
+  adjustmentsApplied = true;
   renderTable();
-  messageEl.textContent = `Adjustments applied to ${overwrite ? 'original cost column' : 'new Adjusted Cost Base column'}`;
+  messageEl.textContent = "Adjustments applied – Adjusted Cost Base column added";
 }
 
 function downloadCSV() {
@@ -391,12 +401,30 @@ function downloadCSV() {
     return;
   }
 
-  let csv = headers.map(escapeCSV).join(',') + '\n';
+  const overwrite = document.getElementById('overwriteCostOnDownload')?.checked ?? false;
 
-  data.forEach(row => {
-    const values = headers.map(h => {
+  let downloadHeaders = [...headers];
+  let downloadData = data.map(row => ({ ...row }));
+
+  if (overwrite && adjustmentsApplied) {
+    // Overwrite price column with adjusted values, remove separate column from download
+    const adjIdx = downloadHeaders.indexOf("Adjusted Cost Base");
+    if (adjIdx !== -1) {
+      downloadHeaders.splice(adjIdx, 1);
+    }
+    downloadData.forEach(row => {
+      if (row["Adjusted Cost Base"] !== undefined) {
+        row[priceHeader] = row["Adjusted Cost Base"];
+        delete row["Adjusted Cost Base"];
+      }
+    });
+  }
+
+  let csv = downloadHeaders.map(escapeCSV).join(',') + '\n';
+
+  downloadData.forEach(row => {
+    const values = downloadHeaders.map(h => {
       let val = row[h] ?? '';
-      // Format price-related columns
       if ((h === priceHeader || h === "Adjusted Cost Base") && val !== '') {
         val = formatCurrency(val);
       }
@@ -415,7 +443,7 @@ function downloadCSV() {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 
-  messageEl.textContent = `Downloaded ${originalFilename}`;
+  messageEl.textContent = `Downloaded ${originalFilename} (${overwrite ? 'original column overwritten' : 'with separate adjusted column'})`;
 }
 
 function escapeCSV(str) {
