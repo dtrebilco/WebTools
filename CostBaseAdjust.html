@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>CSV Editor – Share Purchases + Cost Base Adjustments</title>
+<title>Share Purchases – Total Cost Base Adjustment Tool</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
 <style>
@@ -40,7 +40,7 @@
   table {
     border-collapse: collapse;
     width: 100%;
-    margin-top: 16px;
+    margin-top: 24px;
     background: white;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     overflow-x: auto;
@@ -73,7 +73,7 @@
   }
   .filename { font-weight: 500; color: #2c3e50; }
   #adjustmentPanel {
-    margin-top: 40px;
+    margin: 24px 0 40px;
     background: white;
     padding: 20px;
     border-radius: 8px;
@@ -82,29 +82,34 @@
   .adj-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
     margin-bottom: 12px;
     padding-bottom: 12px;
     border-bottom: 1px solid #eee;
   }
   .adj-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .symbol { flex: 1; font-weight: 500; }
+  .shares { color: #555; font-size: 0.95rem; }
+  .input-group { display: flex; align-items: center; gap: 8px; }
+  .input-group input { width: 180px; }
 </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>Share Purchase CSV Editor + Cost Base Adjustments</h1>
+  <h1>Share Purchases – Total Cost Base Adjustment</h1>
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".csv,text/csv" />
-    <button id="downloadBtn" onclick="downloadCSV()" disabled>Download edited CSV</button>
+    <button id="downloadBtn" onclick="downloadCSV()" disabled>Download updated CSV</button>
     <span id="message"></span>
   </div>
 
   <div id="filenameDisplay" style="margin: 8px 0; min-height: 1.4em;"></div>
 
-  <div id="tableContainer"></div>
   <div id="adjustmentPanel"></div>
+
+  <div id="tableContainer"></div>
 </div>
 
 <script>
@@ -113,8 +118,10 @@ let data = [];
 let headers = [];
 let originalFilename = "edited.csv";
 let symbolHeader = null;
+let countHeader = null;
 let priceHeader = null;
 let uniqueSymbols = [];
+let symbolToTotalShares = {};
 
 const fileInput      = document.getElementById('fileInput');
 const downloadBtn    = document.getElementById('downloadBtn');
@@ -151,7 +158,6 @@ function parseCSV(csvText) {
   const lines = csvText.trim().split(/\r?\n/);
   if (lines.length === 0) return;
 
-  // Basic CSV parser (handles quoted fields with commas)
   function parseLine(line) {
     const row = [];
     let inQuote = false;
@@ -181,20 +187,31 @@ function parseCSV(csvText) {
     return obj;
   });
 
-  // Auto-detect important columns
-  const lower = headers.map(h => h.toLowerCase());
-  symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx/i.test(lower[i])) ||
-                 (headers.length > 1 ? headers[1] : headers[0]);
+  // Auto-detect columns
+  const lower = headers.map(h => h.toLowerCase().trim());
+  symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx|stock/i.test(lower[i])) ||
+                 (headers.length > 0 ? headers[0] : null);
+
+  countHeader = headers.find((h,i) => /count|shares|quantity|units/i.test(lower[i])) ||
+                (headers.length > 1 ? headers[1] : null);
 
   priceHeader = headers.find((h,i) => /price|cost|purchase|buy/i.test(lower[i])) ||
-                (headers.length > 0 ? headers[headers.length-1] : null);
+                (headers.length > 2 ? headers[2] : null);
 
-  uniqueSymbols = data.length
-    ? [...new Set(data.map(r => r[symbolHeader]).filter(s => s && s.trim()))].sort()
-    : [];
+  // Calculate total shares per symbol
+  symbolToTotalShares = {};
+  data.forEach(row => {
+    const sym = (row[symbolHeader] || '').trim();
+    if (!sym) return;
+    const cntStr = row[countHeader] || '0';
+    const cnt = parseFloat(cntStr) || 0;
+    symbolToTotalShares[sym] = (symbolToTotalShares[sym] || 0) + cnt;
+  });
 
-  renderTable();
+  uniqueSymbols = Object.keys(symbolToTotalShares).sort();
+
   renderAdjustmentPanel();
+  renderTable();
 }
 
 function renderTable() {
@@ -232,65 +249,77 @@ function updateCell(input) {
 function renderAdjustmentPanel() {
   adjustmentPanel.innerHTML = '';
 
-  if (!symbolHeader || !priceHeader) {
+  if (!symbolHeader || !countHeader || !priceHeader) {
     adjustmentPanel.innerHTML = `
-      <h2>Cost Base Adjustments</h2>
-      <p style="color:#e74c3c;">Could not automatically detect "stock symbol" and "purchase price" columns.<br>
-      Please make sure your CSV contains these columns (names can vary slightly).</p>`;
+      <h2>Total Cost Base Adjustments</h2>
+      <p style="color:#e74c3c;">Could not auto-detect required columns:<br>
+      • Stock Symbol / Ticker<br>
+      • Count / Shares / Quantity<br>
+      • Purchase Price / Cost<br><br>
+      Please check your CSV headers and try again.</p>`;
     return;
   }
 
   let html = `
-    <h2>Cost Base Adjustments</h2>
-    <p>Enter an adjustment in <strong>$ per share</strong> for each stock.<br>
-       This value will be <strong>added</strong> to the <strong>${escapeHTML(priceHeader)}</strong> column to create a new "Adjusted Cost Base" column.</p>
-    <div style="max-width:500px;">`;
+    <h2>Total Cost Base Adjustments</h2>
+    <p>Enter the <strong>total $ adjustment amount</strong> for each stock symbol.<br>
+       This amount will be divided by the <strong>total shares held</strong> to calculate the per-share adjustment.<br>
+       The result is added to the purchase price → new column: <strong>Adjusted Cost Base</strong>.</p>
+    <div style="max-width:600px;">`;
 
   uniqueSymbols.forEach(sym => {
+    const totalShares = symbolToTotalShares[sym] || 0;
     const safeId = 'adj_' + String(sym).replace(/[^a-z0-9]/gi, '_');
     html += `
     <div class="adj-row">
-      <span style="flex:1; font-weight:500;">${escapeHTML(sym)}</span>
-      <input type="number" id="${safeId}" step="0.0001" value="0" style="width:160px; padding:8px; font-size:1rem;">
+      <span class="symbol">${escapeHTML(sym)}</span>
+      <span class="shares">(${totalShares.toLocaleString()} shares total)</span>
+      <div class="input-group">
+        <span>$</span>
+        <input type="number" id="${safeId}" step="0.01" value="0" min="0">
+      </div>
     </div>`;
   });
 
   html += `</div>
-    <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 24px; font-size:1.1rem;">
+    <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 28px; font-size:1.1rem;">
       Apply Adjustments
     </button>
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      The new column can be edited manually afterwards. Re-apply to update from the adjustment fields.
+      You can still manually edit any cell (including the new Adjusted Cost Base column) after applying.
     </p>`;
 
   adjustmentPanel.innerHTML = html;
 }
 
 function applyAdjustments() {
-  if (!symbolHeader || !priceHeader || uniqueSymbols.length === 0) return;
+  if (!symbolHeader || !countHeader || !priceHeader || uniqueSymbols.length === 0) return;
 
-  const adjustments = {};
+  const adjustmentsTotal = {};
   uniqueSymbols.forEach(sym => {
     const safeId = 'adj_' + String(sym).replace(/[^a-z0-9]/gi, '_');
     const input = document.getElementById(safeId);
-    adjustments[sym] = input ? (parseFloat(input.value) || 0) : 0;
+    adjustmentsTotal[sym] = input ? (parseFloat(input.value) || 0) : 0;
   });
 
   const adjustedHeader = "Adjusted Cost Base";
 
-  // Add column if it doesn't exist yet
+  // Add column if missing
   if (!headers.includes(adjustedHeader)) {
     headers.push(adjustedHeader);
   }
 
   data.forEach(row => {
-    const sym = row[symbolHeader];
-    const adj = adjustments[sym] !== undefined ? adjustments[sym] : 0;
-    const origStr = row[priceHeader] || "0";
-    let orig = parseFloat(origStr);
-    if (isNaN(orig)) orig = 0;
+    const sym = (row[symbolHeader] || '').trim();
+    const totalAdj = adjustmentsTotal[sym] || 0;
+    const totalShares = symbolToTotalShares[sym] || 0;
+    const perShareAdj = totalShares > 0 ? (totalAdj / totalShares) : 0;
 
-    row[adjustedHeader] = (orig + adj).toFixed(4);
+    const origStr = row[priceHeader] || "0";
+    let origPrice = parseFloat(origStr);
+    if (isNaN(origPrice)) origPrice = 0;
+
+    row[adjustedHeader] = (origPrice + perShareAdj).toFixed(6);
   });
 
   renderTable();
