@@ -11,8 +11,17 @@
     margin: 20px;
     background: #f8f9fa;
     color: #222;
+    line-height: 1.5;
   }
-  h1 { color: #2c3e50; }
+  h1 { color: #2c3e50; margin-bottom: 0.4em; }
+  .intro {
+    background: #e8f4fd;
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    border-left: 4px solid #3498db;
+    max-width: 900px;
+  }
   .container { max-width: 1400px; margin: 0 auto; }
   .controls {
     margin: 20px 0;
@@ -36,7 +45,13 @@
   }
   button:hover { background: #2980b9; }
   button:disabled { background: #95a5a6; cursor: not-allowed; }
-  #message { color: #e74c3c; font-weight: 500; }
+  #messageRow {
+    min-height: 2.2em;
+    margin: 8px 0 16px;
+    color: #2c3e50;
+    font-weight: 500;
+  }
+  #message { color: #e74c3c; }
   .checkbox-label {
     display: flex;
     align-items: center;
@@ -47,7 +62,7 @@
   table {
     border-collapse: collapse;
     width: 100%;
-    margin-top: 24px;
+    margin-top: 16px;
     background: white;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     overflow-x: auto;
@@ -75,9 +90,7 @@
     background: #f9f9f9;
     cursor: default;
   }
-  td input:focus {
-    outline: none;
-  }
+  td input:focus { outline: none; }
   .filename { font-weight: 500; color: #2c3e50; }
   #adjustmentPanel {
     margin: 24px 0 40px;
@@ -104,7 +117,13 @@
 <body>
 
 <div class="container">
+
   <h1>Share Purchases – Pro-rata Cost Base Adjustment</h1>
+
+  <div class="intro">
+    <strong>This tool runs completely offline</strong> — your CSV file is processed only in your browser. <strong>No data is uploaded or sent anywhere</strong>.<br><br>
+    <strong>Expected CSV format:</strong> at minimum it should contain columns like Date, Symbol/Ticker, Shares/Quantity, Purchase Price/Cost (names are flexible and auto-detected).
+  </div>
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".csv,text/csv" />
@@ -113,8 +132,9 @@
       <input type="checkbox" id="overwriteCostOnDownload" checked />
       Overwrite original cost column on download
     </label>
-    <span id="message"></span>
   </div>
+
+  <div id="messageRow"><span id="message"></span></div>
 
   <div id="adjustmentPanel"></div>
 
@@ -161,6 +181,26 @@ function handleFileSelect(e) {
     downloadBtn.disabled = true;
   };
   reader.readAsText(file);
+}
+
+function getNextFilename(name) {
+  const dotIndex = name.lastIndexOf('.');
+  const ext = dotIndex >= 0 ? name.slice(dotIndex) : '';
+  let base = dotIndex >= 0 ? name.slice(0, dotIndex) : name;
+
+  // Look for trailing number
+  const match = base.match(/^(.*)(\d+)$/);
+  if (match) {
+    const prefix = match[1];
+    const numStr = match[2].trim();
+    const num = parseInt(numStr, 10);
+    if (!isNaN(num)) {
+      return `${prefix}${num + 1}${ext}`;
+    }
+  }
+
+  // If no number found, just return original
+  return name;
 }
 
 function cleanNumericString(str) {
@@ -215,25 +255,25 @@ function parseCSV(csvText) {
   });
 
   const lower = headers.map(h => h.toLowerCase().trim());
-  symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx|stock/i.test(lower[i])) ||
-                 (headers.length > 0 ? headers[0] : null);
+  symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx|stock/i.test(lower[i]));
+  countHeader = headers.find((h,i) => /count|shares|quantity|units|no\.|num/i.test(lower[i]));
+  priceHeader = headers.find((h,i) => /price|cost|purchase|buy|avg/i.test(lower[i]) &&
+                                     !/adjust.*cost.*base/i.test(lower[i]) );
 
-  countHeader = headers.find((h,i) => /count|shares|quantity|units|no\.|num/i.test(lower[i])) ||
-                (headers.length > 1 ? headers[1] : null);
+  uniqueSymbols = [];
+  if (symbolHeader && countHeader) {
 
-  priceHeader = headers.find((h,i) => /price|cost|purchase|buy|avg/i.test(lower[i])) ||
-                (headers.length > 2 ? headers[2] : null);
-
-  symbolToTotalShares = {};
-  data.forEach(row => {
-    const sym = (row[symbolHeader] || '').trim();
-    if (!sym) return;
-    const cntStr = cleanNumericString(row[countHeader] || '0');
-    const cnt = parseFloat(cntStr) || 0;
-    symbolToTotalShares[sym] = (symbolToTotalShares[sym] || 0) + cnt;
-  });
-
-  uniqueSymbols = Object.keys(symbolToTotalShares).sort();
+    symbolToTotalShares = {};
+    data.forEach(row => {
+      const sym = (row[symbolHeader] || '').trim();
+      if (!sym) return;
+      const cntStr = cleanNumericString(row[countHeader] || '0');
+      const cnt = parseFloat(cntStr) || 0;
+      symbolToTotalShares[sym] = (symbolToTotalShares[sym] || 0) + cnt;
+    });
+  
+    uniqueSymbols = Object.keys(symbolToTotalShares).sort();
+  }
 
   adjustmentsApplied = false;
   renderAdjustmentPanel();
@@ -358,6 +398,7 @@ function downloadCSV() {
   }
 
   const overwrite = document.getElementById('overwriteCostOnDownload').checked;
+  let downloadName = getNextFilename(originalFilename);
 
   // Create a copy of headers/data for download
   let downloadHeaders = [...headers];
@@ -391,13 +432,13 @@ function downloadCSV() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = originalFilename;
+  link.download = downloadName;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 
-  messageEl.textContent = `Downloaded ${originalFilename} (${overwrite ? 'original column overwritten' : 'with separate adjusted column'})`;
+  messageEl.textContent = `Downloaded ${downloadName} (${overwrite ? 'original column overwritten' : 'with separate adjusted column'})`;
 }
 
 function escapeCSV(str) {
