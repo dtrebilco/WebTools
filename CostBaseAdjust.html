@@ -137,7 +137,7 @@ function handleFileSelect(e) {
   if (!file) return;
 
   originalFilename = file.name;
-  filenameDisplay.innerHTML = `Loaded: <span class="filename">${escapeHTML(originalFilename)}</span>`;
+  filenameDisplay.innerHTML = `Loaded: <span class="filename">${escapeHTML(file.name)}</span>`;
 
   messageEl.textContent = "Reading file...";
   downloadBtn.disabled = false;
@@ -152,6 +152,18 @@ function handleFileSelect(e) {
     downloadBtn.disabled = true;
   };
   reader.readAsText(file);
+}
+
+function cleanNumericString(str) {
+  if (!str) return '0';
+  str = String(str).trim();
+  // Remove currency symbols and codes
+  str = str.replace(/^\s*(\$|USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*/i, '');
+  // Remove thousands separators (commas)
+  str = str.replace(/,/g, '');
+  // Remove any trailing currency
+  str = str.replace(/\s*(USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*$/i, '');
+  return str;
 }
 
 function parseCSV(csvText) {
@@ -203,8 +215,10 @@ function parseCSV(csvText) {
   data.forEach(row => {
     const sym = (row[symbolHeader] || '').trim();
     if (!sym) return;
-    const cntStr = row[countHeader] || '0';
+
+    const cntStr = cleanNumericString(row[countHeader] || '0');
     const cnt = parseFloat(cntStr) || 0;
+
     symbolToTotalShares[sym] = (symbolToTotalShares[sym] || 0) + cnt;
   });
 
@@ -287,7 +301,8 @@ function renderAdjustmentPanel() {
     </button>
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
       Result: each row gets <strong>adjustment = total_$ × (row_shares / total_shares)</strong><br>
-      added to its original purchase price → new column <strong>Adjusted Cost Base</strong>.
+      added to its original purchase price → new column <strong>Adjusted Cost Base</strong>.<br>
+      <small>Note: $ symbols and currency codes are now stripped from the price & shares columns automatically.</small>
     </p>`;
 
   adjustmentPanel.innerHTML = html;
@@ -305,14 +320,13 @@ function applyAdjustments() {
 
   const adjustedHeader = "Adjusted Cost Base";
 
-  // Add column if missing
   if (!headers.includes(adjustedHeader)) {
     headers.push(adjustedHeader);
   }
 
   data.forEach(row => {
     const sym = (row[symbolHeader] || '').trim();
-    const rowSharesStr = row[countHeader] || '0';
+    const rowSharesStr = cleanNumericString(row[countHeader] || '0');
     const rowShares = parseFloat(rowSharesStr) || 0;
 
     const totalAdj = adjustmentsTotal[sym] || 0;
@@ -323,11 +337,10 @@ function applyAdjustments() {
       rowAdj = totalAdj * (rowShares / totalShares);
     }
 
-    const origStr = row[priceHeader] || "0";
+    const origStr = cleanNumericString(row[priceHeader] || "0");
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    // Add the pro-rated adjustment to this row's price
     row[adjustedHeader] = (origPrice + rowAdj).toFixed(6);
   });
 
