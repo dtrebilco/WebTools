@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Share Purchases – Total Cost Base Adjustment Tool</title>
+<title>Share Purchases – Pro-rata Total Cost Base Adjustment</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
 <style>
@@ -97,7 +97,7 @@
 <body>
 
 <div class="container">
-  <h1>Share Purchases – Total Cost Base Adjustment</h1>
+  <h1>Share Purchases – Pro-rata Total Cost Base Adjustment</h1>
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".csv,text/csv" />
@@ -192,10 +192,10 @@ function parseCSV(csvText) {
   symbolHeader = headers.find((h,i) => /symbol|ticker|code|asx|stock/i.test(lower[i])) ||
                  (headers.length > 0 ? headers[0] : null);
 
-  countHeader = headers.find((h,i) => /count|shares|quantity|units/i.test(lower[i])) ||
+  countHeader = headers.find((h,i) => /count|shares|quantity|units|no\.|num/i.test(lower[i])) ||
                 (headers.length > 1 ? headers[1] : null);
 
-  priceHeader = headers.find((h,i) => /price|cost|purchase|buy/i.test(lower[i])) ||
+  priceHeader = headers.find((h,i) => /price|cost|purchase|buy|avg/i.test(lower[i])) ||
                 (headers.length > 2 ? headers[2] : null);
 
   // Calculate total shares per symbol
@@ -251,7 +251,7 @@ function renderAdjustmentPanel() {
 
   if (!symbolHeader || !countHeader || !priceHeader) {
     adjustmentPanel.innerHTML = `
-      <h2>Total Cost Base Adjustments</h2>
+      <h2>Pro-rata Total Cost Base Adjustments</h2>
       <p style="color:#e74c3c;">Could not auto-detect required columns:<br>
       • Stock Symbol / Ticker<br>
       • Count / Shares / Quantity<br>
@@ -261,10 +261,10 @@ function renderAdjustmentPanel() {
   }
 
   let html = `
-    <h2>Total Cost Base Adjustments</h2>
+    <h2>Pro-rata Total Cost Base Adjustments</h2>
     <p>Enter the <strong>total $ adjustment amount</strong> for each stock symbol.<br>
-       This amount will be divided by the <strong>total shares held</strong> to calculate the per-share adjustment.<br>
-       The result is added to the purchase price → new column: <strong>Adjusted Cost Base</strong>.</p>
+       This total will be <strong>pro-rated</strong> across all purchases of that symbol<br>
+       based on the number of shares in each row.</p>
     <div style="max-width:600px;">`;
 
   uniqueSymbols.forEach(sym => {
@@ -286,7 +286,8 @@ function renderAdjustmentPanel() {
       Apply Adjustments
     </button>
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      You can still manually edit any cell (including the new Adjusted Cost Base column) after applying.
+      Result: each row gets <strong>adjustment = total_$ × (row_shares / total_shares)</strong><br>
+      added to its original purchase price → new column <strong>Adjusted Cost Base</strong>.
     </p>`;
 
   adjustmentPanel.innerHTML = html;
@@ -311,19 +312,27 @@ function applyAdjustments() {
 
   data.forEach(row => {
     const sym = (row[symbolHeader] || '').trim();
+    const rowSharesStr = row[countHeader] || '0';
+    const rowShares = parseFloat(rowSharesStr) || 0;
+
     const totalAdj = adjustmentsTotal[sym] || 0;
     const totalShares = symbolToTotalShares[sym] || 0;
-    const perShareAdj = totalShares > 0 ? (totalAdj / totalShares) : 0;
+
+    let rowAdj = 0;
+    if (totalShares > 0 && rowShares > 0) {
+      rowAdj = totalAdj * (rowShares / totalShares);
+    }
 
     const origStr = row[priceHeader] || "0";
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    row[adjustedHeader] = (origPrice + perShareAdj).toFixed(6);
+    // Add the pro-rated adjustment to this row's price
+    row[adjustedHeader] = (origPrice + rowAdj).toFixed(6);
   });
 
   renderTable();
-  messageEl.textContent = `Adjustments applied – "${adjustedHeader}" column added/updated`;
+  messageEl.textContent = `Pro-rata adjustments applied – "${adjustedHeader}" column updated`;
 }
 
 function downloadCSV() {
