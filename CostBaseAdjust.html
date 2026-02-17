@@ -72,11 +72,11 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     font-family: inherit;
+    background: #f9f9f9;
+    cursor: default;
   }
   td input:focus {
     outline: none;
-    border-color: #3498db;
-    box-shadow: 0 0 0 3px rgba(52,152,219,0.2);
   }
   .filename { font-weight: 500; color: #2c3e50; }
   #adjustmentPanel {
@@ -110,13 +110,11 @@
     <input type="file" id="fileInput" accept=".csv,text/csv" />
     <button id="downloadBtn" onclick="downloadCSV()" disabled>Download CSV</button>
     <label class="checkbox-label">
-      <input type="checkbox" id="overwriteCostOnDownload" />
+      <input type="checkbox" id="overwriteCostOnDownload" checked />
       Overwrite original cost column on download
     </label>
     <span id="message"></span>
   </div>
-
-  <div id="filenameDisplay" style="margin: 8px 0; min-height: 1.4em;"></div>
 
   <div id="adjustmentPanel"></div>
 
@@ -131,14 +129,14 @@ let originalFilename = "edited.csv";
 let symbolHeader = null;
 let countHeader = null;
 let priceHeader = null;
+let adjustHeader = "Adjusted Cost Base";
 let uniqueSymbols = [];
 let symbolToTotalShares = {};
-let adjustmentsApplied = false;  // flag to know if column was added
+let adjustmentsApplied = false;
 
 const fileInput      = document.getElementById('fileInput');
 const downloadBtn    = document.getElementById('downloadBtn');
 const messageEl      = document.getElementById('message');
-const filenameDisplay = document.getElementById('filenameDisplay');
 const tableContainer = document.getElementById('tableContainer');
 const adjustmentPanel = document.getElementById('adjustmentPanel');
 
@@ -149,7 +147,6 @@ function handleFileSelect(e) {
   if (!file) return;
 
   originalFilename = file.name;
-  filenameDisplay.innerHTML = `Loaded: <span class="filename">${escapeHTML(file.name)}</span>`;
 
   messageEl.textContent = "Reading file...";
   downloadBtn.disabled = false;
@@ -251,55 +248,19 @@ function renderTable() {
 
   let html = '<table><thead><tr>';
   headers.forEach(h => html += `<th>${escapeHTML(h)}</th>`);
-  if (adjustmentsApplied) {
-    html += `<th>Adjusted Cost Base</th>`;
-  }
   html += '</tr></thead><tbody>';
 
   data.forEach((row, rowIndex) => {
     html += '<tr>';
     headers.forEach((header, colIndex) => {
       let displayVal = row[header] ?? '';
-      if (header === priceHeader) {
-        displayVal = formatCurrency(displayVal);
-      }
-      html += `<td><input type="text" value="${escapeHTML(displayVal)}"
-               data-row="${rowIndex}" data-col="${colIndex}"
-               onchange="updateCell(this)"></td>`;
+      html += `<td><input type="text" value="${escapeHTML(displayVal)}" readonly></td>`;
     });
-
-    if (adjustmentsApplied) {
-      let adjVal = row["Adjusted Cost Base"] ?? '';
-      adjVal = formatCurrency(adjVal);
-      html += `<td><input type="text" value="${escapeHTML(adjVal)}"
-               data-row="${rowIndex}" data-col="adjusted"
-               onchange="updateAdjustedCell(this)"></td>`;
-    }
-
     html += '</tr>';
   });
 
   html += '</tbody></table>';
   tableContainer.innerHTML = html;
-}
-
-function updateCell(input) {
-  const rowIdx = parseInt(input.dataset.row);
-  const colIdx = parseInt(input.dataset.col);
-  const header = headers[colIdx];
-  let newValue = input.value;
-
-  if (header === priceHeader) {
-    newValue = cleanNumericString(newValue);
-  }
-
-  data[rowIdx][header] = newValue;
-}
-
-function updateAdjustedCell(input) {
-  const rowIdx = parseInt(input.dataset.row);
-  let newValue = cleanNumericString(input.value);
-  data[rowIdx]["Adjusted Cost Base"] = newValue;
 }
 
 function renderAdjustmentPanel() {
@@ -336,12 +297,7 @@ function renderAdjustmentPanel() {
 
     <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 28px; font-size:1.1rem;">
       Apply Adjustments
-    </button>
-
-    <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      The Adjusted Cost Base column appears only after you apply adjustments.<br>
-      Checkbox controls only the downloaded CSV format.
-    </p>`;
+    </button>`;
 
   adjustmentPanel.innerHTML = html;
 }
@@ -366,8 +322,8 @@ function applyAdjustments() {
   }
 
   // Add the column only now
-  if (!headers.includes("Adjusted Cost Base")) {
-    headers.push("Adjusted Cost Base");
+  if (!headers.includes(adjustHeader)) {
+    headers.push(adjustHeader);
   }
 
   data.forEach(row => {
@@ -387,7 +343,7 @@ function applyAdjustments() {
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    row["Adjusted Cost Base"] = (origPrice + rowAdj).toFixed(2);
+    row[adjustHeader] = formatCurrency((origPrice + rowAdj).toFixed(2));
   });
 
   adjustmentsApplied = true;
@@ -401,21 +357,22 @@ function downloadCSV() {
     return;
   }
 
-  const overwrite = document.getElementById('overwriteCostOnDownload')?.checked ?? false;
+  const overwrite = document.getElementById('overwriteCostOnDownload').checked;
 
+  // Create a copy of headers/data for download
   let downloadHeaders = [...headers];
   let downloadData = data.map(row => ({ ...row }));
 
   if (overwrite && adjustmentsApplied) {
     // Overwrite price column with adjusted values, remove separate column from download
-    const adjIdx = downloadHeaders.indexOf("Adjusted Cost Base");
+    const adjIdx = downloadHeaders.indexOf(adjustHeader);
     if (adjIdx !== -1) {
       downloadHeaders.splice(adjIdx, 1);
     }
     downloadData.forEach(row => {
-      if (row["Adjusted Cost Base"] !== undefined) {
-        row[priceHeader] = row["Adjusted Cost Base"];
-        delete row["Adjusted Cost Base"];
+      if (row[adjustHeader] !== undefined) {
+        row[priceHeader] = row[adjustHeader];
+        delete row[adjustHeader];
       }
     });
   }
@@ -425,9 +382,6 @@ function downloadCSV() {
   downloadData.forEach(row => {
     const values = downloadHeaders.map(h => {
       let val = row[h] ?? '';
-      if ((h === priceHeader || h === "Adjusted Cost Base") && val !== '') {
-        val = formatCurrency(val);
-      }
       return escapeCSV(val);
     });
     csv += values.join(',') + '\n';
