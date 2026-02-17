@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Share Purchases – Pro-rata Total Cost Base Adjustment</title>
+<title>Share Purchases – Pro-rata Cost Base Adjustment</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
 <style>
@@ -37,6 +37,13 @@
   button:hover { background: #2980b9; }
   button:disabled { background: #95a5a6; cursor: not-allowed; }
   #message { color: #e74c3c; font-weight: 500; }
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
   table {
     border-collapse: collapse;
     width: 100%;
@@ -92,12 +99,13 @@
   .shares { color: #555; font-size: 0.95rem; }
   .input-group { display: flex; align-items: center; gap: 8px; }
   .input-group input { width: 180px; }
+  .option-row { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>Share Purchases – Pro-rata Total Cost Base Adjustment</h1>
+  <h1>Share Purchases – Pro-rata Cost Base Adjustment</h1>
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".csv,text/csv" />
@@ -219,10 +227,8 @@ function parseCSV(csvText) {
   data.forEach(row => {
     const sym = (row[symbolHeader] || '').trim();
     if (!sym) return;
-
     const cntStr = cleanNumericString(row[countHeader] || '0');
     const cnt = parseFloat(cntStr) || 0;
-
     symbolToTotalShares[sym] = (symbolToTotalShares[sym] || 0) + cnt;
   });
 
@@ -246,12 +252,9 @@ function renderTable() {
     html += '<tr>';
     headers.forEach((header, colIndex) => {
       let displayVal = row[header] ?? '';
-
-      // Format Adjusted Cost Base column with $ and commas
-      if (header === "Adjusted Cost Base") {
+      if (header === priceHeader || header === "Adjusted Cost Base") {
         displayVal = formatCurrency(displayVal);
       }
-
       html += `<td><input type="text" value="${escapeHTML(displayVal)}"
                data-row="${rowIndex}" data-col="${colIndex}"
                onchange="updateCell(this)"></td>`;
@@ -269,8 +272,7 @@ function updateCell(input) {
   const header = headers[colIdx];
   let newValue = input.value;
 
-  // If editing Adjusted Cost Base → strip formatting before storing
-  if (header === "Adjusted Cost Base") {
+  if (header === priceHeader || header === "Adjusted Cost Base") {
     newValue = cleanNumericString(newValue);
   }
 
@@ -282,19 +284,15 @@ function renderAdjustmentPanel() {
 
   if (!symbolHeader || !countHeader || !priceHeader) {
     adjustmentPanel.innerHTML = `
-      <h2>Pro-rata Total Cost Base Adjustments</h2>
-      <p style="color:#e74c3c;">Could not auto-detect required columns:<br>
-      • Stock Symbol / Ticker<br>
-      • Count / Shares / Quantity<br>
-      • Purchase Price / Cost<br><br>
-      Please check your CSV headers and try again.</p>`;
+      <h2>Pro-rata Cost Base Adjustments</h2>
+      <p style="color:#e74c3c;">Could not auto-detect required columns (Symbol, Shares, Cost/Price).</p>`;
     return;
   }
 
   let html = `
-    <h2>Pro-rata Total Cost Base Adjustments</h2>
-    <p>Enter the <strong>total $ adjustment amount</strong> for each stock symbol.<br>
-       This total will be <strong>pro-rated</strong> across all purchases of that symbol.</p>
+    <h2>Pro-rata Cost Base Adjustments</h2>
+    <p>Enter the <strong>total $ adjustment amount</strong> for each symbol.<br>
+       It will be pro-rated across purchases based on share count per row.</p>
     <div style="max-width:600px;">`;
 
   uniqueSymbols.forEach(sym => {
@@ -312,12 +310,22 @@ function renderAdjustmentPanel() {
   });
 
   html += `</div>
+
+    <div class="option-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="overwriteCost" />
+        Overwrite original cost/price column with adjusted values
+        <small style="color:#666; margin-left:8px;">(instead of creating separate column)</small>
+      </label>
+    </div>
+
     <button onclick="applyAdjustments()" style="margin-top:20px; padding:12px 28px; font-size:1.1rem;">
       Apply Adjustments
     </button>
+
     <p style="font-size:0.9rem; color:#666; margin-top:16px;">
-      <strong>Adjusted Cost Base</strong> is now rounded to 2 decimal places<br>
-      and displayed with $ and thousands separators (e.g. $1,234.56)
+      Adjusted values are rounded to 2 decimal places.<br>
+      Downloaded CSV includes $ and thousands formatting.
     </p>`;
 
   adjustmentPanel.innerHTML = html;
@@ -333,10 +341,22 @@ function applyAdjustments() {
     adjustmentsTotal[sym] = input ? (parseFloat(input.value) || 0) : 0;
   });
 
-  const adjustedHeader = "Adjusted Cost Base";
+  const overwrite = document.getElementById('overwriteCost')?.checked ?? false;
+  const targetHeader = overwrite ? priceHeader : "Adjusted Cost Base";
 
-  if (!headers.includes(adjustedHeader)) {
-    headers.push(adjustedHeader);
+  // If overwriting, ensure target is the original price column
+  if (overwrite && targetHeader !== priceHeader) return;
+
+  // If not overwriting, add column if missing
+  if (!overwrite && !headers.includes(targetHeader)) {
+    headers.push(targetHeader);
+  }
+
+  // Remove separate Adjusted Cost Base column if overwriting
+  if (overwrite && headers.includes("Adjusted Cost Base")) {
+    const idx = headers.indexOf("Adjusted Cost Base");
+    headers.splice(idx, 1);
+    data.forEach(row => delete row["Adjusted Cost Base"]);
   }
 
   data.forEach(row => {
@@ -356,13 +376,13 @@ function applyAdjustments() {
     let origPrice = parseFloat(origStr);
     if (isNaN(origPrice)) origPrice = 0;
 
-    // Round to 2 decimal places and store as plain number string
     const adjustedValue = (origPrice + rowAdj).toFixed(2);
-    row[adjustedHeader] = adjustedValue;
+
+    row[targetHeader] = adjustedValue;
   });
 
   renderTable();
-  messageEl.textContent = `Adjustments applied – "${adjustedHeader}" column updated (2 decimal places)`;
+  messageEl.textContent = `Adjustments applied to ${overwrite ? 'original cost column' : 'new Adjusted Cost Base column'}`;
 }
 
 function downloadCSV() {
@@ -374,7 +394,14 @@ function downloadCSV() {
   let csv = headers.map(escapeCSV).join(',') + '\n';
 
   data.forEach(row => {
-    const values = headers.map(h => escapeCSV(row[h] ?? ''));
+    const values = headers.map(h => {
+      let val = row[h] ?? '';
+      // Format price-related columns
+      if ((h === priceHeader || h === "Adjusted Cost Base") && val !== '') {
+        val = formatCurrency(val);
+      }
+      return escapeCSV(val);
+    });
     csv += values.join(',') + '\n';
   });
 
@@ -394,7 +421,7 @@ function downloadCSV() {
 function escapeCSV(str) {
   if (str == null) return '';
   str = String(str);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.startsWith('$')) {
     return '"' + str.replace(/"/g, '""') + '"';
   }
   return str;
