@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <title>Share Purchases – Pro-rata Cost Base Adjustment</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-
+<!-- Coded with aid of Grok4.1 -->
 <style>
   body {
     font-family: -apple-system, BlinkMacOSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -122,7 +122,8 @@
 
   <div class="intro">
     <strong>This tool runs completely offline</strong> — your CSV file is processed only in your browser. <strong>No data is uploaded or sent anywhere</strong>.<br><br>
-    <strong>Expected CSV format:</strong> at minimum it should contain columns like Date, Symbol/Ticker, Shares/Quantity, Purchase Price/Cost (names are flexible and auto-detected).
+    <strong>Expected CSV format:</strong> at minimum it should contain column names like:<br>
+	[Date, Stock/Symbol/Ticker, Count/Shares/Quantity, Purchase Price/Cost] (names are flexible and auto-detected).
   </div>
 
   <div class="controls">
@@ -308,13 +309,11 @@ function renderAdjustmentPanel() {
 
   if (!symbolHeader || !countHeader || !priceHeader) {
     adjustmentPanel.innerHTML = `
-      <h2>Pro-rata Cost Base Adjustments</h2>
       <p style="color:#e74c3c;">Could not auto-detect required columns (Symbol, Shares, Cost/Price).</p>`;
     return;
   }
 
   let html = `
-    <h2>Pro-rata Cost Base Adjustments</h2>
     <p>Enter the <strong>total $ adjustment amount</strong> for each symbol.<br>
        It will be pro-rated across purchases based on share count per row.</p>
     <div style="max-width:600px;">`;
