@@ -223,35 +223,67 @@ function formatCurrency(value) {
 }
 
 function parseCSV(csvText) {
-  const lines = csvText.trim().split(/\r?\n/);
-  if (lines.length === 0) return;
+  csvText = csvText.trim();
+  if (csvText.length === 0) return;
 
-  function parseLine(line) {
-    const row = [];
-    let inQuote = false;
-    let field = '';
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
+  const rawRows = [];
+  let row = [];
+  let field = '';
+  let inQuote = false;
+  let i = 0;
+
+  while (i < csvText.length) {
+    const char = csvText[i];
+
+    if (inQuote) {
       if (char === '"') {
-        if (inQuote && line[i+1] === '"') { field += '"'; i++; }
-        else inQuote = !inQuote;
-      } else if (char === ',' && !inQuote) {
-        row.push(field);
+        if (csvText[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuote = false;
+        }
+      } else {
+        field += char;
+      }
+    } else {
+      if (char === '"') {
+        inQuote = true;
+      } else if (char === ',') {
+        row.push(field.trim());
+        field = '';
+      } else if (char === '\r' || char === '\n') {
+        if (char === '\r' && csvText[i + 1] === '\n') i++;
+        row.push(field.trim());
+        if (row.some(f => f !== '')) {
+          rawRows.push(row);
+        }
+        row = [];
         field = '';
       } else {
         field += char;
       }
     }
-    row.push(field);
-    return row;
+    i++;
   }
 
-  const rawRows = lines.map(parseLine);
+  // Add the last field and row if pending
+  if (field !== '' || row.length > 0) {
+    row.push(field.trim());
+    if (row.some(f => f !== '')) {
+      rawRows.push(row);
+    }
+  }
+
+  if (rawRows.length === 0) return;
+
   headers = rawRows[0];
 
   data = rawRows.slice(1).map(row => {
     const obj = {};
-    headers.forEach((h, i) => obj[h] = row[i] ?? '');
+    headers.forEach((h, idx) => {
+      obj[h] = row[idx] ?? '';
+    });
     return obj;
   });
 
@@ -327,7 +359,7 @@ function renderAdjustmentPanel() {
       <span class="shares">(${totalShares.toLocaleString()} shares total)</span>
       <div class="input-group">
         <span>$</span>
-        <input type="number" id="${safeId}" step="0.01" value="0" min="0">
+        <input type="number" id="${safeId}" step="0.01" value="0">
       </div>
     </div>`;
   });
