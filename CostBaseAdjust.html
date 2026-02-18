@@ -216,7 +216,9 @@ function cleanNumericString(str) {
 function formatCurrency(value) {
   const num = parseFloat(value);
   if (isNaN(num)) return value || '';
-  return '$' + num.toLocaleString('en-AU', {
+  return num.toLocaleString('en-AU', {
+    style: 'currency',
+    currency: 'AUD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -346,7 +348,7 @@ function renderAdjustmentPanel() {
   }
 
   let html = `
-    <p>Enter the <strong>total $ adjustment amount</strong> for each symbol.<br>
+    <p>Enter the <strong>total $ adjustment amount</strong> for each symbol (positive to increase, negative to decrease).<br>
        It will be pro-rated across purchases based on share count per row.</p>
     <div style="max-width:600px;">`;
 
