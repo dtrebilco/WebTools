@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL Image Compositor</title>
+    <style>
+        :root { --bg: #121212; --panel: #1e1e1e; --accent: #00bcd4; --text: #e0e0e0; --border: #333; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        /* Layout */
+        .main-layout { display: flex; flex: 1; overflow: hidden; }
+        .controls { width: 420px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--panel); }
+        .preview { flex: 1; background: #000; position: relative; display: flex; justify-content: center; align-items: center; 
+                   background-image: radial-gradient(#333 1px, transparent 1px); background-size: 20px 20px; }
+
+        /* Drag & Drop Zone */
+        .drop-zone { 
+            border: 2px dashed #555; border-radius: 6px; margin: 15px; padding: 20px; 
+            text-align: center; cursor: pointer; transition: 0.2s; background: #252526;
+        }
+        .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: #2c2c2e; }
+        .drop-zone p { margin: 0; font-size: 0.9rem; color: #888; pointer-events: none; }
+        
+        /* Thumbnail Gallery */
+        .thumb-list { display: flex; gap: 8px; padding: 0 15px 15px; overflow-x: auto; min-height: 80px; scrollbar-width: thin; }
+        .thumb-item { position: relative; min-width: 64px; width: 64px; height: 64px; border-radius: 4px; overflow: hidden; border: 1px solid #444; background: #000; }
+        .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+        .thumb-label { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; font-size: 9px; text-align: center; padding: 2px; }
+
+        /* Editor & Toolbar */
+        .editor-container { flex: 1; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+        
+        .toolbar { padding: 8px 15px; background: #252526; border-bottom: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
+        .pill-btn { background: #333; border: 1px solid #555; color: #ccc; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; cursor: pointer; transition: 0.2s; }
+        .pill-btn:hover { background: #444; border-color: #888; color: white; }
+
+        .editor-header { padding: 5px 15px; font-size: 0.8rem; color: #666; background: #1a1a1a; }
+        textarea { flex: 1; background: #1a1a1a; color: #d4d4d4; border: none; padding: 15px; font-family: 'Consolas', monospace; font-size: 13px; resize: none; outline: none; line-height: 1.5; }
+        
+        /* Footer / Actions */
+        .actions { padding: 10px 15px; background: #252526; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .btn { background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+        .btn-primary { background: var(--accent); color: #000; font-weight: bold; border: none; }
+        .btn-primary:hover { opacity: 0.9; }
+        
+        /* Canvas & Stats */
+        canvas { max-width: 95%; max-height: 95%; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+        .stats { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; color: #aaa; }
+        .error-log { color: #ff5252; background: #300; padding: 10px; font-size: 12px; font-family: monospace; display: none; max-height: 100px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+
+<div class="main-layout">
+    <div class="controls">
+        
+        <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <p><strong>Step 1:</strong> Drag Images Here</p>
+        </div>
+
+        <div class="thumb-list" id="thumbList">
+            </div>
+
+        <div class="editor-container">
+            <div class="editor-header">Step 2: Apply Logic</div>
+            
+            <div class="toolbar">
+                <button class="pill-btn" onclick="applyPreset('default')">Default (Img0)</button>
+                <button class="pill-btn" onclick="applyPreset('diff')">Difference</button>
+                <button class="pill-btn" onclick="applyPreset('mix')">Mix 50%</button>
+                <button class="pill-btn" onclick="applyPreset('bw')">Grayscale</button>
+                <button class="pill-btn" onclick="applyPreset('invert')">Invert</button>
+            </div>
+
+            <textarea id="userCode" spellcheck="false" placeholder="// Upload an image to start..."></textarea>
+            
+            <div id="errorLog" class="error-log"></div>
+            
+            <div class="actions">
+                <button class="btn btn-primary" onclick="render()">Run (Ctrl+Enter)</button>
+                <a id="downloadBtn" class="btn" style="text-decoration:none; display:none">Download PNG</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="preview">
+        <canvas id="glCanvas"></canvas>
+        <div class="stats" id="canvasStats">0 x 0</div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+    const dropZone = document.getElementById('dropZone');
+    const thumbList = document.getElementById('thumbList');
+    const errorLog = document.getElementById('errorLog');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const userCode = document.getElementById('userCode');
+
+    let loadedImages = [];
+    let textures = [];
+
+    // --- Presets ---
+    const presets = {
+        default: `// Just show the first image
+fragColor = img0;`,
+        
+        diff: `// Calculate difference between first two images
+// Requires 2 images uploaded
+vec3 diff = abs(img0.rgb - img1.rgb);
+fragColor = vec4(diff, 1.0);`,
+        
+        mix: `// Mix first two images evenly
+// Requires 2 images uploaded
+fragColor = mix(img0, img1, 0.5);`,
+        
+        bw: `// Convert first image to Grayscale (Luma)
+float gray = dot(img0.rgb, vec3(0.299, 0.587, 0.114));
+fragColor = vec4(vec3(gray), 1.0);`,
+        
+        invert: `// Invert colors of first image
+fragColor = vec4(1.0 - img0.rgb, 1.0);`
+    };
+
+    // Set Default Code on Load
+    userCode.value = presets.default;
+
+    function applyPreset(name) {
+        userCode.value = presets[name];
+        render();
+    }
+
+    // --- Drag & Drop Logic ---
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(n => {
+        dropZone.addEventListener(n, e => { e.preventDefault(); e.stopPropagation(); }, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(n => {
+        dropZone.addEventListener(n, () => dropZone.classList.add('dragover'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(n => {
+        dropZone.addEventListener(n, () => dropZone.classList.remove('dragover'), false);
+    });
+
+    dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files), false);
+    document.getElementById('fileInput').addEventListener('change', e => handleFiles(e.target.files));
+
+    async function handleFiles(files) {
+        loadedImages = []; 
+        thumbList.innerHTML = ''; 
+        
+        const fileArray = Array.from(files);
+        if (fileArray.length === 0) return;
+
+        for (let i = 0; i < fileArray.length; i++) {
+            if (!fileArray[i].type.startsWith('image/')) continue;
+            
+            const img = await loadImage(fileArray[i]);
+            loadedImages.push(img);
+            
+            // Thumbnail
+            const div = document.createElement('div');
+            div.className = 'thumb-item';
+            div.innerHTML = `<img src="${img.src}"><div class="thumb-label">img${i}</div>`;
+            thumbList.appendChild(div);
+        }
+
+        if (loadedImages.length > 0) {
+            canvas.width = loadedImages[0].width;
+            canvas.height = loadedImages[0].height;
+            document.getElementById('canvasStats').innerText = `${canvas.width} x ${canvas.height}`;
+            
+            createTextures();
+            render();
+        }
+    }
+
+    function loadImage(file) {
+        return new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.src = URL.createObjectURL(file);
+        });
+    }
+
+    // --- WebGL Logic ---
+
+    function createTextures() {
+        textures.forEach(t => gl.deleteTexture(t));
+        textures = [];
+
+        loadedImages.forEach(img => {
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            textures.push(tex);
+        });
+    }
+
+    function getFragmentShader(userSource) {
+        let header = `#version 300 es
+precision mediump float;
+uniform vec2 u_resolution;
+out vec4 fragColor;
+`;
+        let lookups = `void main() {
+    vec2 uv = gl_FragCoord.xy / u_resolution;
+    vec2 uv_y = vec2(uv.x, 1.0 - uv.y);
+    vec2 res = u_resolution;
+`;
+        
+        for(let i=0; i<loadedImages.length; i++) {
+            header += `uniform sampler2D u_image${i};\n`;
+            lookups += `    vec4 img${i} = texture(u_image${i}, uv_y);\n`;
+        }
+        
+        // Safety Fallback (allows code to compile even if images aren't loaded yet)
+        if(loadedImages.length === 0) {
+             lookups += `    vec4 img0 = vec4(0.0); vec4 img1 = vec4(0.0);\n`;
+        } else if (loadedImages.length === 1) {
+             lookups += `    vec4 img1 = vec4(0.0);\n`;
+        }
+
+        return header + lookups + "\n" + userSource + "\n}";
+    }
+
+    function render() {
+        errorLog.style.display = 'none';
+        
+        try {
+            const vsSource = `#version 300 es
+            in vec4 a_position;
+            void main() { gl_Position = a_position; }`;
+            
+            const fsSource = getFragmentShader(userCode.value);
+            
+            const vs = createShader(gl.VERTEX_SHADER, vsSource);
+            const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+            
+            const program = gl.createProgram();
+            gl.attachShader(program, vs);
+            gl.attachShader(program, fs);
+            gl.linkProgram(program);
+            
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                throw new Error(gl.getProgramInfoLog(program));
+            }
+
+            gl.useProgram(program);
+
+            textures.forEach((tex, i) => {
+                const loc = gl.getUniformLocation(program, `u_image${i}`);
+                gl.activeTexture(gl.TEXTURE0 + i);
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.uniform1i(loc, i);
+            });
+
+            gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), canvas.width, canvas.height);
+
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+            
+            const posLoc = gl.getAttribLocation(program, "a_position");
+            gl.enableVertexAttribArray(posLoc);
+            gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            downloadBtn.href = canvas.toDataURL("image/png");
+            downloadBtn.download = "result.png";
+            downloadBtn.style.display = "inline-block";
+
+        } catch (e) {
+            errorLog.style.display = 'block';
+            errorLog.innerText = e.message;
+        }
+    }
+
+    function createShader(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw new Error(gl.getShaderInfoLog(shader));
+        }
+        return shader;
+    }
+
+    // Hotkey
+    document.addEventListener('keydown', e => {
+        if (e.ctrlKey && e.key === 'Enter') render();
+    });
+
+</script>
+</body>
+</html>

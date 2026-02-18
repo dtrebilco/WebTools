@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channel Packer & Unpacker</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --text-color: #333;
+            --border-radius: 12px;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --success: #16a34a;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { margin-bottom: 20px; }
+
+        /* --- Layout --- */
+        .main-controls {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            text-align: center;
+            margin-bottom: 30px;
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .result-section {
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 40px;
+            text-align: center;
+        }
+
+        .channel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1400px;
+        }
+
+        /* --- Cards --- */
+        .card {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .card h3 {
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #555;
+        }
+
+        /* --- Canvas --- */
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            /* Checkerboard for transparency */
+            background-image: 
+                linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px; 
+            background-color: white; 
+            margin-bottom: 15px;
+        }
+
+        /* --- Buttons & Inputs --- */
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+            margin: 5px;
+        }
+
+        .btn {
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: 0.2s;
+            text-decoration: none;
+            display: inline-block;
+            font-weight: 500;
+        }
+
+        .btn-primary { background-color: var(--accent); }
+        .btn-primary:hover { background-color: var(--accent-hover); }
+
+        .btn-success { background-color: var(--success); }
+        .btn-success:hover { background-color: #15803d; }
+
+        .btn-upload {
+            background-color: #4b5563;
+        }
+        .btn-upload:hover { background-color: #374151; }
+
+        /* Hide actual file input but keep it functional */
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+            height: 100%;
+            width: 100%;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .hidden { display: none; }
+        
+        #loading {
+            margin-top: 10px;
+            font-style: italic;
+            color: var(--accent);
+        }
+
+        .final-preview {
+            border: 4px solid var(--accent);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Channel Mixer & Splitter</h1>
+
+    <div class="main-controls">
+        <h3>Step 1: Upload Base Image</h3>
+        <p style="font-size: 0.9rem; color:#666; margin-bottom:15px;">Upload an image to split it. You can then replace individual channels to edit the image.</p>
+        <div class="file-input-wrapper">
+            <button class="btn btn-primary">Select Image</button>
+            <input type="file" id="mainInput" accept="image/*">
+        </div>
+        <div id="loading" class="hidden">Processing...</div>
+    </div>
+
+    <div id="resultArea" class="result-section hidden">
+        <div class="card">
+            <h3 style="color: var(--accent);">Result (Recombined)</h3>
+            <canvas id="canvasResult" class="final-preview"></canvas>
+            <div class="actions">
+                <button class="btn btn-success" onclick="downloadCanvas('canvasResult', 'combined')">Download Combined Image</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="channelArea" class="channel-grid hidden">
+
+        <div class="card">
+            <h3>Red Channel</h3>
+            <canvas id="canvasRed"></canvas>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="downloadCanvas('canvasRed', 'red')">Download</button>
+                <div class="file-input-wrapper">
+                    <button class="btn btn-upload">Replace Red</button>
+                    <input type="file" onchange="handleChannelReplace(this, 'red')">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Green Channel</h3>
+            <canvas id="canvasGreen"></canvas>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="downloadCanvas('canvasGreen', 'green')">Download</button>
+                <div class="file-input-wrapper">
+                    <button class="btn btn-upload">Replace Green</button>
+                    <input type="file" onchange="handleChannelReplace(this, 'green')">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Blue Channel</h3>
+            <canvas id="canvasBlue"></canvas>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="downloadCanvas('canvasBlue', 'blue')">Download</button>
+                <div class="file-input-wrapper">
+                    <button class="btn btn-upload">Replace Blue</button>
+                    <input type="file" onchange="handleChannelReplace(this, 'blue')">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Alpha (Opacity)</h3>
+            <canvas id="canvasAlpha"></canvas>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="downloadCanvas('canvasAlpha', 'alpha')">Download</button>
+                <div class="file-input-wrapper">
+                    <button class="btn btn-upload">Replace Alpha</button>
+                    <input type="file" onchange="handleChannelReplace(this, 'alpha')">
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const mainInput = document.getElementById('mainInput');
+        const channelArea = document.getElementById('channelArea');
+        const resultArea = document.getElementById('resultArea');
+        const loadingText = document.getElementById('loading');
+
+        // Global dimensions to ensure replacements match size
+        let globalW = 0;
+        let globalH = 0;
+        let currentFileName = "image";
+
+        const canvases = {
+            result: document.getElementById('canvasResult'),
+            red: document.getElementById('canvasRed'),
+            green: document.getElementById('canvasGreen'),
+            blue: document.getElementById('canvasBlue'),
+            alpha: document.getElementById('canvasAlpha')
+        };
+        
+        const ctxs = {
+            result: canvases.result.getContext('2d', {willReadFrequently: true}),
+            red: canvases.red.getContext('2d', {willReadFrequently: true}),
+            green: canvases.green.getContext('2d', {willReadFrequently: true}),
+            blue: canvases.blue.getContext('2d', {willReadFrequently: true}),
+            alpha: canvases.alpha.getContext('2d', {willReadFrequently: true})
+        };
+
+        mainInput.addEventListener('change', handleMainUpload);
+
+        // --- 1. Initial Processing ---
+
+        function handleMainUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Name logic
+            const nameParts = file.name.split('.');
+            if (nameParts.length > 1) nameParts.pop();
+            currentFileName = nameParts.join('.');
+
+            loadingText.classList.remove('hidden');
+            channelArea.classList.add('hidden');
+            resultArea.classList.add('hidden');
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    initCanvases(img);
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function initCanvases(img) {
+            globalW = img.width;
+            globalH = img.height;
+
+            // Resize all canvases
+            Object.values(canvases).forEach(c => {
+                c.width = globalW;
+                c.height = globalH;
+            });
+
+            // Draw original to result momentarily to extract data
+            ctxs.result.drawImage(img, 0, 0);
+            const imageData = ctxs.result.getImageData(0, 0, globalW, globalH);
+            const data = imageData.data;
+
+            // Create buffers
+            const rData = ctxs.red.createImageData(globalW, globalH);
+            const gData = ctxs.green.createImageData(globalW, globalH);
+            const bData = ctxs.blue.createImageData(globalW, globalH);
+            const aData = ctxs.alpha.createImageData(globalW, globalH);
+
+            for (let i = 0; i < data.length; i += 4) {
+                // Red view
+                rData.data[i] = data[i];
+                rData.data[i+1] = data[i];
+                rData.data[i+2] = data[i];
+                rData.data[i+3] = 255;
+
+                // Green view
+                gData.data[i] = data[i+1];
+                gData.data[i+1] = data[i+1];
+                gData.data[i+2] = data[i+1];
+                gData.data[i+3] = 255;
+
+                // Blue view
+                bData.data[i] = data[i+2];
+                bData.data[i+1] = data[i+2];
+                bData.data[i+2] = data[i+2];
+                bData.data[i+3] = 255;
+
+                // Alpha view: Grayscale (a, a, a, 255)
+                const a = data[i+3];
+                aData.data[i] = a;
+                aData.data[i+1] = a;
+                aData.data[i+2] = a;
+                aData.data[i+3] = 255;
+            }
+
+            ctxs.red.putImageData(rData, 0, 0);
+            ctxs.green.putImageData(gData, 0, 0);
+            ctxs.blue.putImageData(bData, 0, 0);
+            ctxs.alpha.putImageData(aData, 0, 0);
+
+            // Show UI
+            loadingText.classList.add('hidden');
+            channelArea.classList.remove('hidden');
+            resultArea.classList.remove('hidden');
+            
+            // Recombine once to ensure result matches split
+            recombine();
+        }
+
+        // --- 2. Handling Replacements ---
+
+        function handleChannelReplace(input, channelType) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    updateSingleChannel(img, channelType);
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function updateSingleChannel(newImg, type) {
+            // Draw new image to a temp canvas to resize it to match globalW/H
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = globalW;
+            tempCanvas.height = globalH;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Draw and stretch to fit
+            tempCtx.drawImage(newImg, 0, 0, globalW, globalH);
+            const newData = tempCtx.getImageData(0, 0, globalW, globalH).data;
+
+            // Get target context
+            const targetCtx = ctxs[type];
+            const targetImageData = targetCtx.createImageData(globalW, globalH);
+            const targetData = targetImageData.data;
+
+            for (let i = 0; i < newData.length; i += 4) {
+                // Convert uploaded image to grayscale to get intensity
+                // (Even if they upload red, we use intensity to fill the slot)
+                const intensity = (newData[i] + newData[i+1] + newData[i+2]) / 3;
+
+                targetData[i] = intensity;   // Grayscale rep
+                targetData[i+1] = intensity;
+                targetData[i+2] = intensity;
+                targetData[i+3] = 255;
+
+            }
+
+            // Update visual canvas
+            targetCtx.putImageData(targetImageData, 0, 0);
+
+            // Update the combined result
+            recombine();
+        }
+
+        // --- 3. Recombination Logic ---
+
+        function recombine() {
+            // Pull data from all channel canvases
+            const rArr = ctxs.red.getImageData(0, 0, globalW, globalH).data;
+            const gArr = ctxs.green.getImageData(0, 0, globalW, globalH).data;
+            const bArr = ctxs.blue.getImageData(0, 0, globalW, globalH).data;
+            const aArr = ctxs.alpha.getImageData(0, 0, globalW, globalH).data;
+
+            const finalImgData = ctxs.result.createImageData(globalW, globalH);
+            const finalData = finalImgData.data;
+
+            for (let i = 0; i < finalData.length; i += 4) {
+                // Red Canvas stores Red in index i (R,0,0,255)
+                finalData[i] = rArr[i];
+                
+                // Green Canvas stores Green in index i+1 (0,G,0,255)
+                finalData[i+1] = gArr[i+1];
+
+                // Blue Canvas stores Blue in index i+2 (0,0,B,255)
+                finalData[i+2] = bArr[i+2];
+
+                // Alpha Canvas stores Alpha as Grayscale in index i (A,A,A,255)
+                finalData[i+3] = aArr[i]; 
+            }
+
+            ctxs.result.putImageData(finalImgData, 0, 0);
+        }
+
+        // --- 4. Utilities ---
+
+        function downloadCanvas(canvasId, suffix) {
+            const canvas = document.getElementById(canvasId);
+            const link = document.createElement('a');
+            link.download = `${currentFileName}_${suffix}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+    </script>
+</body>
+</html>
