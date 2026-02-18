@@ -207,9 +207,9 @@ function getNextFilename(name) {
 function cleanNumericString(str) {
   if (!str) return '0';
   str = String(str).trim();
-  str = str.replace(/^\s*(\$|USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*/i, '');
+  str = str.replace(/^\s*(\$|USD|AUD|NZD|EUR|GBP|¥|£|€)\s*/i, '');
   str = str.replace(/,/g, '');
-  str = str.replace(/\s*(USD|AUD|NZD|EUR|GBP|¥|£|€|\$|\¥)\s*$/i, '');
+  str = str.replace(/\s*(\$|USD|AUD|NZD|EUR|GBP|¥|£|€)\s*$/i, '');
   return str;
 }
 
